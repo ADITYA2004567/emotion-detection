@@ -384,20 +384,15 @@
 
 # 
 
+
 import streamlit as st
 import cv2
 import numpy as np
-import os
-import joblib
 from PIL import Image
+import joblib
+import os
 
-# --- Emotion Labels ---
-emotion_labels = ['Angry', 'Happy', 'Neutral', 'Sad']
-
-# --- Load Haar Cascade (for face detection) ---
-face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
-
-# --- Reconstruct SVM model if split ---
+# --- Function to reconstruct SVM model from parts ---
 def merge_model_parts(output_file='emotion_svm.pkl', part_prefix='emotion_svm.pkl.part'):
     index = 1
     try:
@@ -414,7 +409,7 @@ def merge_model_parts(output_file='emotion_svm.pkl', part_prefix='emotion_svm.pk
     except Exception as e:
         st.error(f"❌ Error merging model parts: {e}")
 
-# --- Ensure model exists ---
+# --- Ensure model file exists ---
 model_path = "emotion_svm.pkl"
 if not os.path.exists(model_path):
     st.warning("⚠️ Model file not found. Attempting to reconstruct...")
@@ -424,66 +419,67 @@ if not os.path.exists(model_path):
     st.error("❌ Model still missing after reconstruction. Please upload all .part files.")
     st.stop()
 
-# --- Load SVM model ---
+# --- Load Haar Cascade for Face Detection ---
+face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+
+# --- Load the trained SVM model and label encoder ---
 @st.cache_resource
-def load_model():
+def load_model_and_labels():
     try:
         model = joblib.load(model_path)
         st.success("✅ SVM model loaded successfully.")
-        return model
     except Exception as e:
         st.error(f"❌ Failed to load SVM model: {e}")
         st.stop()
 
-model = load_model()
+    # Try loading label encoder for correct label order
+    try:
+        encoder = joblib.load("label_encoder.pkl")
+        emotion_labels = encoder.classes_
+        st.success("✅ Label encoder loaded.")
+    except Exception as e:
+        st.warning("⚠️ Label encoder not found. Using default label order (may be inaccurate).")
+        emotion_labels = ['Angry', 'Happy', 'Neutral', 'Sad']
+
+    return model, emotion_labels
+
+model, emotion_labels = load_model_and_labels()
 
 # --- Streamlit UI ---
 st.title("😊 Real-time Emotion Detection (SVM Model)")
+run = st.checkbox("Start Webcam")
 
-# --- Webcam Support Table ---
-st.markdown("### 📊 Webcam Support Matrix")
-st.markdown("""
-| Deployment Mode      | Webcam Method       | Works? |
-|----------------------|---------------------|--------|
-| **Local Streamlit**  | `cv2.VideoCapture`  | ✅ Yes |
-| **Deployed (Cloud)** | `cv2.VideoCapture`  | ❌ No  |
-| **Deployed (Cloud)** | `st.camera_input()` | ✅ Yes |
-""")
-
-# --- Webcam Toggle ---
-run = st.toggle("▶ Start Webcam")
 FRAME_WINDOW = st.image([])
 motion_threshold = 800
 prev_gray = None
 
-# --- Try OpenCV webcam (LOCAL) ---
-webcam_available = False
-cap = None
-
 if run:
+    # Try multiple webcam indexes to ensure access
+    cap = None
     for cam_index in [0, 1, 2]:
-        st.write(f"🔍 Trying camera index {cam_index}...")
-        backend = cv2.CAP_DSHOW if os.name == 'nt' else 0
-        temp_cap = cv2.VideoCapture(cam_index, backend)
+        st.write(f"🔍 Trying webcam index {cam_index}...")
+        temp_cap = cv2.VideoCapture(cam_index, cv2.CAP_DSHOW if os.name == 'nt' else 0)
         if temp_cap.isOpened():
             cap = temp_cap
-            webcam_available = True
             st.success(f"✅ Webcam opened at index {cam_index}")
             break
         else:
             temp_cap.release()
-            st.warning(f"⚠️ Camera index {cam_index} not available.")
+            st.warning(f"❌ Webcam index {cam_index} not available.")
 
-# --- Local webcam loop using OpenCV ---
-if run and webcam_available:
+    if cap is None:
+        st.error("❌ Could not open any webcam (tried indexes 0, 1, 2).")
+        st.stop()
+
     while run:
         ret, frame = cap.read()
         if not ret:
-            st.warning("⚠️ Failed to read frame.")
+            st.warning("⚠️ Failed to read frame from webcam.")
             break
 
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
+        # Anti-spoofing: motion detection
         motion = False
         if prev_gray is not None:
             diff = cv2.absdiff(prev_gray, gray)
@@ -492,20 +488,22 @@ if run and webcam_available:
                 motion = True
         prev_gray = gray
 
+        # Face Detection
         faces = face_cascade.detectMultiScale(gray, scaleFactor=1.3, minNeighbors=5)
 
         if len(faces) == 0:
             cv2.putText(frame, "No face detected", (20, 30),
                         cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
         elif not motion:
-            cv2.putText(frame, "Spoof detected (no motion)", (20, 30),
+            cv2.putText(frame, "Spoof detected! No motion", (20, 30),
                         cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
         else:
             for (x, y, w, h) in faces:
                 face_img = gray[y:y+h, x:x+w]
                 try:
-                    resized = cv2.resize(face_img, (48, 48))
-                    input_vec = resized.flatten().reshape(1, -1) / 255.0
+                    resized_face = cv2.resize(face_img, (48, 48))
+                    input_vec = resized_face.flatten().reshape(1, -1) / 255.0
+
                     pred_idx = model.predict(input_vec)[0]
                     emotion = emotion_labels[pred_idx]
 
@@ -523,21 +521,5 @@ if run and webcam_available:
     cap.release()
     FRAME_WINDOW.image([])
 
-# --- Fallback: Browser snapshot for cloud deployment ---
-elif run and not webcam_available:
-    st.warning("⚠️ Webcam access not available. Using browser-based snapshot as fallback.")
-    snapshot = st.camera_input("📸 Take a picture using your webcam")
-
-    if snapshot is not None:
-        st.success("✅ Image captured! Analyzing...")
-
-        img = Image.open(snapshot).convert("L")
-        img = img.resize((48, 48))
-        input_vec = np.array(img).flatten().reshape(1, -1) / 255.0
-
-        try:
-            pred_idx = model.predict(input_vec)[0]
-            emotion = emotion_labels[pred_idx]
-            st.markdown(f"### 🧠 Detected Emotion: **{emotion}**")
-        except Exception as e:
-            st.error(f"Prediction failed: {e}")
+else:
+    st.info("👆 Click the checkbox above to start the webcam for real-time emotion detection.")
