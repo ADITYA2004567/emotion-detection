@@ -1,5 +1,10 @@
-streamlit
-torch
-torchvision
-Pillow
-opencv-python-headless
+# App & UI
+streamlit==1.35.0
+opencv-python==4.9.0.80
+Pillow==10.3.0
+
+# ML Libraries
+scikit-learn==1.4.2
+joblib==1.4.0
+numpy==1.26.4
+
