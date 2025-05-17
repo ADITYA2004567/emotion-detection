@@ -1,12 +1,14 @@
 import streamlit as st
 import cv2
 import numpy as np
-from PIL import Image
-import joblib
 import os
+import joblib
 
 # --- Emotion Labels ---
 emotion_labels = ['Angry', 'Happy', 'Neutral', 'Sad']
+
+# --- Load Haar Cascade (once) ---
+face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
 
 # --- Function to reconstruct SVM model from parts ---
 def merge_model_parts(output_file='emotion_svm.pkl', part_prefix='emotion_svm.pkl.part'):
@@ -35,9 +37,6 @@ if not os.path.exists(model_path):
     st.error("❌ Model still missing after reconstruction. Please upload all .part files.")
     st.stop()
 
-# --- Load Haar Cascade for Face Detection ---
-face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
-
 # --- Load the trained SVM model ---
 @st.cache_resource
 def load_model():
@@ -61,7 +60,7 @@ prev_gray = None
 
 if run:
     cap = None
-    # Try multiple indexes
+    # Try multiple camera indexes to open webcam
     for cam_index in [0, 1, 2]:
         st.text(f"Trying camera index {cam_index}...")
         temp_cap = cv2.VideoCapture(cam_index, cv2.CAP_DSHOW if os.name == 'nt' else 0)
@@ -85,7 +84,7 @@ if run:
 
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
-        # Anti-spoofing motion check
+        # Anti-spoofing: Check for motion between frames
         motion = False
         if prev_gray is not None:
             diff = cv2.absdiff(prev_gray, gray)
@@ -94,6 +93,7 @@ if run:
                 motion = True
         prev_gray = gray
 
+        # Detect faces in grayscale image
         faces = face_cascade.detectMultiScale(gray, scaleFactor=1.3, minNeighbors=5)
 
         if len(faces) == 0:
@@ -127,5 +127,4 @@ if run:
 
 else:
     st.info("👆 Turn on the webcam with the toggle above.")
-
 
