@@ -1,119 +1,3 @@
-# import streamlit as st
-# import cv2
-# import torch
-# import numpy as np
-# from torchvision import models, transforms
-# from PIL import Image
-# import pathlib
-
-# # --- Reconstruct model from parts ---
-# def merge_model_parts(output_file='emotion_model.pth', part_prefix='emotion_model.pth.part'):
-#     index = 1
-#     try:
-#         with open(output_file, 'wb') as output:
-#             while True:
-#                 part_file = f"{part_prefix}{index}"
-#                 try:
-#                     with open(part_file, 'rb') as pf:
-#                         output.write(pf.read())
-#                         st.info(f"Merged: {part_file}")
-#                 except FileNotFoundError:
-#                     break
-#                 index += 1
-#         st.success("Model reconstruction complete.")
-#     except Exception as e:
-#         st.error(f"Error merging model parts: {e}")
-
-# # --- Check and merge model ---
-# if not pathlib.Path("emotion_model.pth").exists():
-#     st.warning("Model file not found. Attempting to reconstruct from parts...")
-#     merge_model_parts()
-
-# if not pathlib.Path("emotion_model.pth").exists():
-#     st.error("Model file still missing after reconstruction. Please upload all .part files.")
-#     st.stop()
-
-# # --- Load model ---
-# @st.cache_resource
-# def load_model():
-#     model = models.mobilenet_v2(weights=None)
-#     model.classifier[1] = torch.nn.Linear(model.last_channel, 4)
-#     model.load_state_dict(torch.load("emotion_model.pth", map_location='cpu'))
-#     model.eval()
-#     return model
-
-# model = load_model()
-
-# # --- Labels and preprocessing ---
-# emotion_labels = ['Angry', 'Happy', 'Sad', 'Neutral']
-# transform = transforms.Compose([
-#     transforms.Resize((96, 96)),
-#     transforms.ToTensor(),
-#     transforms.Normalize([0.485]*3, [0.229]*3)
-# ])
-
-# # --- Face Detection ---
-# face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
-
-# # --- Streamlit UI ---
-# st.title("Emotion Detection from Webcam (PyTorch)")
-# run = st.toggle("Start Webcam")
-# FRAME_WINDOW = st.image([])
-# motion_threshold = 800
-# prev_gray = None
-
-# # --- Webcam loop ---
-# cap = None
-# if run:
-#     cap = cv2.VideoCapture(0)
-
-# while run:
-#     if cap is None:
-#         break
-
-#     ret, frame = cap.read()
-#     if not ret:
-#         st.warning("Failed to access webcam")
-#         break
-
-#     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-
-#     # Anti-spoofing motion detection
-#     motion = False
-#     if prev_gray is not None:
-#         diff = cv2.absdiff(prev_gray, gray)
-#         score = np.sum(diff)
-#         if score > motion_threshold:
-#             motion = True
-#     prev_gray = gray
-
-#     faces = face_cascade.detectMultiScale(gray, 1.3, 5)
-
-#     if len(faces) == 0:
-#         cv2.putText(frame, "No face detected", (20, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
-#     elif not motion:
-#         cv2.putText(frame, "Spoof detected! No motion", (20, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
-#     else:
-#         for (x, y, w, h) in faces:
-#             face_img = frame[y:y+h, x:x+w]
-#             face_img = cv2.cvtColor(face_img, cv2.COLOR_BGR2RGB)
-#             pil_img = Image.fromarray(face_img)
-#             input_tensor = transform(pil_img).unsqueeze(0)
-
-#             with torch.no_grad():
-#                 outputs = model(input_tensor)
-#                 _, predicted = torch.max(outputs, 1)
-#                 emotion = emotion_labels[predicted.item()]
-
-#             cv2.rectangle(frame, (x, y), (x+w, y+h), (0, 255, 0), 2)
-#             cv2.putText(frame, emotion, (x, y-10), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-
-#     frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-#     FRAME_WINDOW.image(frame)
-
-# if cap is not None:
-#     cap.release()
-
 import streamlit as st
 import cv2
 import numpy as np
@@ -174,15 +58,21 @@ run = st.checkbox("Start Webcam")
 FRAME_WINDOW = st.image([])
 motion_threshold = 800
 prev_gray = None
-cap = None
 
 if run:
-    cap = cv2.VideoCapture(0)
+    # Try multiple webcam indexes to ensure access
+    for cam_index in [0, 1, 2]:
+        cap = cv2.VideoCapture(cam_index)
+        if cap.isOpened():
+            break
+    else:
+        st.error("❌ Could not open any webcam (tried indexes 0, 1, 2).")
+        st.stop()
 
     while run:
         ret, frame = cap.read()
         if not ret:
-            st.warning("⚠️ Failed to access webcam.")
+            st.warning("⚠️ Failed to read frame from webcam.")
             break
 
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
@@ -218,9 +108,10 @@ if run:
                     cv2.rectangle(frame, (x, y), (x+w, y+h), (0, 255, 0), 2)
                     cv2.putText(frame, emotion, (x, y - 10),
                                 cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-                except:
+                except Exception as e:
                     cv2.putText(frame, "Face error", (x, y - 10),
                                 cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+                    st.error(f"Face processing error: {e}")
 
         frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         FRAME_WINDOW.image(frame)
@@ -230,4 +121,5 @@ if run:
 
 else:
     st.info("👆 Click the checkbox above to start the webcam.")
+
 
