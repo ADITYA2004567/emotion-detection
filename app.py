@@ -53,20 +53,28 @@ model = load_model()
 
 # --- Streamlit UI ---
 st.title("😊 Real-time Emotion Detection (SVM Model)")
-run = st.checkbox("Start Webcam")
+run = st.toggle("▶ Start Webcam")
 
 FRAME_WINDOW = st.image([])
 motion_threshold = 800
 prev_gray = None
 
 if run:
-    # Try multiple webcam indexes to ensure access
+    cap = None
+    # Try multiple indexes
     for cam_index in [0, 1, 2]:
-        cap = cv2.VideoCapture(cam_index)
-        if cap.isOpened():
+        st.text(f"Trying camera index {cam_index}...")
+        temp_cap = cv2.VideoCapture(cam_index, cv2.CAP_DSHOW if os.name == 'nt' else 0)
+        if temp_cap.isOpened():
+            cap = temp_cap
+            st.success(f"✅ Camera opened at index {cam_index}")
             break
-    else:
-        st.error("❌ Could not open any webcam (tried indexes 0, 1, 2).")
+        else:
+            temp_cap.release()
+            st.warning(f"⚠️ Camera index {cam_index} not available.")
+
+    if cap is None:
+        st.error("❌ Could not open any webcam.")
         st.stop()
 
     while run:
@@ -77,7 +85,7 @@ if run:
 
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
-        # Anti-spoofing: motion detection
+        # Anti-spoofing motion check
         motion = False
         if prev_gray is not None:
             diff = cv2.absdiff(prev_gray, gray)
@@ -86,7 +94,6 @@ if run:
                 motion = True
         prev_gray = gray
 
-        # Face Detection
         faces = face_cascade.detectMultiScale(gray, scaleFactor=1.3, minNeighbors=5)
 
         if len(faces) == 0:
@@ -101,7 +108,6 @@ if run:
                 try:
                     resized_face = cv2.resize(face_img, (48, 48))
                     input_vec = resized_face.flatten().reshape(1, -1) / 255.0
-
                     pred_idx = model.predict(input_vec)[0]
                     emotion = emotion_labels[pred_idx]
 
@@ -120,6 +126,6 @@ if run:
     FRAME_WINDOW.image([])
 
 else:
-    st.info("👆 Click the checkbox above to start the webcam.")
+    st.info("👆 Turn on the webcam with the toggle above.")
 
 
