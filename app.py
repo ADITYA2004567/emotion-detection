@@ -113,18 +113,18 @@
 
 # if cap is not None:
 #     cap.release()
+
 import streamlit as st
 import cv2
 import numpy as np
 from PIL import Image
 import joblib
 import os
-import pathlib
 
-# --- Labels ---
+# --- Emotion Labels ---
 emotion_labels = ['Angry', 'Happy', 'Neutral', 'Sad']
 
-# --- Function to reconstruct model from parts ---
+# --- Function to reconstruct SVM model from parts ---
 def merge_model_parts(output_file='emotion_svm.pkl', part_prefix='emotion_svm.pkl.part'):
     index = 1
     try:
@@ -141,7 +141,7 @@ def merge_model_parts(output_file='emotion_svm.pkl', part_prefix='emotion_svm.pk
     except Exception as e:
         st.error(f"❌ Error merging model parts: {e}")
 
-# --- Ensure full model file exists ---
+# --- Ensure model file exists ---
 model_path = "emotion_svm.pkl"
 if not os.path.exists(model_path):
     st.warning("⚠️ Model file not found. Attempting to reconstruct...")
@@ -150,6 +150,9 @@ if not os.path.exists(model_path):
 if not os.path.exists(model_path):
     st.error("❌ Model still missing after reconstruction. Please upload all .part files.")
     st.stop()
+
+# --- Load Haar Cascade for Face Detection ---
+face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
 
 # --- Load the trained SVM model ---
 @st.cache_resource
@@ -164,4 +167,67 @@ def load_model():
 
 model = load_model()
 
+# --- Streamlit UI ---
+st.title("😊 Real-time Emotion Detection (SVM Model)")
+run = st.checkbox("Start Webcam")
+
+FRAME_WINDOW = st.image([])
+motion_threshold = 800
+prev_gray = None
+cap = None
+
+if run:
+    cap = cv2.VideoCapture(0)
+
+    while run:
+        ret, frame = cap.read()
+        if not ret:
+            st.warning("⚠️ Failed to access webcam.")
+            break
+
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
+        # Anti-spoofing: motion detection
+        motion = False
+        if prev_gray is not None:
+            diff = cv2.absdiff(prev_gray, gray)
+            score = np.sum(diff)
+            if score > motion_threshold:
+                motion = True
+        prev_gray = gray
+
+        # Face Detection
+        faces = face_cascade.detectMultiScale(gray, scaleFactor=1.3, minNeighbors=5)
+
+        if len(faces) == 0:
+            cv2.putText(frame, "No face detected", (20, 30),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+        elif not motion:
+            cv2.putText(frame, "Spoof detected! No motion", (20, 30),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+        else:
+            for (x, y, w, h) in faces:
+                face_img = gray[y:y+h, x:x+w]
+                try:
+                    resized_face = cv2.resize(face_img, (48, 48))
+                    input_vec = resized_face.flatten().reshape(1, -1) / 255.0
+
+                    pred_idx = model.predict(input_vec)[0]
+                    emotion = emotion_labels[pred_idx]
+
+                    cv2.rectangle(frame, (x, y), (x+w, y+h), (0, 255, 0), 2)
+                    cv2.putText(frame, emotion, (x, y - 10),
+                                cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                except:
+                    cv2.putText(frame, "Face error", (x, y - 10),
+                                cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+
+        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        FRAME_WINDOW.image(frame)
+
+    cap.release()
+    FRAME_WINDOW.image([])
+
+else:
+    st.info("👆 Click the checkbox above to start the webcam.")
 
